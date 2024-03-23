@@ -1,0 +1,173 @@
+package main
+
+import (
+	"fmt"
+	"io"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"sort"
+	"time"
+
+	shell "github.com/ipfs/go-ipfs-api"
+)
+
+func sendFiletoPeer() {
+	// Connect to the IPFS API
+	api := shell.NewShell("localhost:5001")
+	var filePath string
+	var ReqCPU int
+	var ReqRAM int
+	var loc string
+	fmt.Println("Enter full path of the file you want to save:")
+	fmt.Scan(&filePath)
+	
+	fmt.Println("Enter Required RAM:")
+	fmt.Scan(&ReqRAM)
+	fmt.Println("Enter Required CPU:")
+	fmt.Scan(&ReqCPU)
+	fmt.Println("Enter the region e.g. Europe,Asia...:")
+	fmt.Scan(&loc)
+	// fmt.Printf("File size: %d bytes\n", fileSize)
+	data, err := ioutil.ReadFile(string(filePath))
+	if err != nil {
+		panic(err)
+	}
+	NodesInfo := getFreeSpace()
+	// Encode file
+	for i := 0; i < 10; i++ {
+		
+	encodingTime := time.Now()
+	dataShards, parityShards := 3, 1
+	encodedData, metadata, err := encodingData(data, dataShards, parityShards)
+	if err != nil {
+		panic(err)
+	}
+	metadata.fileName = filePath
+
+	
+	// fileHash, err := api.AddDir(filePath)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// info, err := api.ObjectStat(fileHash)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	
+	// fmt.Printf("Hash: %s\nSize: %d\n", fileHash, size)
+	//status := statCheck()
+	// if len(status.Al) != 0 {
+	// 	fmt.Printf("The file %v with the hash %v is alread stored to the node %v\n",filePath, status.CID,status.Al )
+	// 	return
+	// }
+	
+
+	// fmt.Println("Nodes in your region and ranking based on available free space")
+
+	// for i, dt := range NodesInfo {
+	// 	if loc == dt.Location {
+	// 		fmt.Println(i, dt)
+	// 	}
+
+	// }
+	size := len(encodedData[0])
+	wList := []Workflow{
+		{fileSize: float32(size), CPU: ReqCPU, RAM: ReqRAM, Location: loc},
+	}
+
+	timeForPSO := time.Now()
+	nodeMat := pso(wList, NodesInfo)
+	//fmt.Printf("Node Matric%v", nodeMat)
+	elapsTomeforPSO := time.Since(timeForPSO)
+	//fmt.Println(len(nodeMat))
+
+	for p := 0; p <= len(nodeMat)-1; p++ {
+
+		sort.Slice(nodeMat[p], func(i, j int) bool {
+
+			return nodeMat[p][i].cost < nodeMat[p][j].cost // use ">" if you want descending order
+		})
+	}
+	c := make(chan *http.Response)
+	//fmt.Printf("Nodes in %v and their costs to store the %v file\n", loc, filePath)
+	// fmt.Println("Nodes in your region and ranking based on cost function")
+	// for i, dt := range nodeMat[0] {
+
+	// 	fmt.Println(i, dt)
+	// }
+	
+
+	//fmt.Println("top peer ", nodeMat[0][0].peer)
+
+	// fmt.Printf("List of posible solutions for task 1:%v\nList of posible solutions for task 2:%v\nList of posible solutions for task 3:%v\nList of posible solutions for task 4:%v\n", nodeMat[0], nodeMat[1], nodeMat[2], nodeMat[3])
+	for i := 0; i < len(encodedData); i++ {
+
+		err = ioutil.WriteFile("ipfs.txt", encodedData[i], 0644)
+		if err != nil {
+			panic(err)
+		}
+		startt := time.Now()
+		fileHash, err := api.AddDir("ipfs.txt")
+		if err != nil {
+			panic(err)
+		}
+
+		topPeer := nodeMat[0][i].peer
+
+		
+		go func() {
+			response := apiHandle(fileHash, topPeer)
+			c <- (response)
+		}()
+		//time.Sleep(1 * time.Second)
+		response := <-c
+
+		elapsed := time.Since(startt)
+		if err != nil {
+
+			fmt.Println(err.Error())
+			os.Exit(1)
+		}
+		responseDat,
+			err := io.ReadAll(response.Body)
+		if err != nil {
+			fmt.Print(err.Error())
+		}
+		metadata.IpfsHashes[i] = fileHash
+		fmt.Println(string(responseDat))
+		fmt.Println("########Sending########")
+		fmt.Printf("Storage Node:%v\nNode Region: %v\nChunk hash:%v\nChunk size:%v\nLatency (Procesign Time):%v\nData Transfer time(Elapsed time for sending file to suitable Node):%v\nData Finality Time(Time taken by the system to transfer a file to a Node):%v\n", topPeer, loc, fileHash, size, elapsTomeforPSO, elapsed, elapsTomeforPSO+elapsed)
+		//fmt.Printf("Hash: %s\nSize: %d\n", fileHash, size)
+		fmt.Println("########Sent########")
+
+	}
+	fileSendTime := time.Since(encodingTime)
+	SaveMetadata(metadata)
+	fmt.Println("Total time to save file",fileSendTime)
+	//fmt.Println(metadata)
+	}
+}
+
+func apiHandle(fileHash string, topPeer string) *http.Response {
+	response, 
+	err := http.Post("http://127.0.0.1:9094/pins/ipfs/"+fileHash+"?mode=recursive&name=&replication-max=1&replication-min=1&shard-size=0&user-allocations="+topPeer, "application/json", nil)
+	if err != nil {
+		fmt.Println("API ttp://127.0.0.1:9094 is not responding\nSwitching to ttp://127.0.0.1:9098" )
+		// os.Exit(1)
+		response,
+		err := http.Post("http://127.0.0.1:9098/pins/ipfs/"+fileHash+"?mode=recursive&name=&replication-max=1&replication-min=1&shard-size=0&user-allocations="+topPeer, "application/json", nil)
+		if err != nil {
+			fmt.Println("API ttp://127.0.0.1:9098 is not responding\nSwitching to ttp://127.0.0.1:9099" )
+			response,
+			err := http.Post("http://127.0.0.1:9099/pins/ipfs/"+fileHash+"?mode=recursive&name=&replication-max=1&replication-min=1&shard-size=0&user-allocations="+topPeer, "application/json", nil)
+			if err != nil {
+				fmt.Println("API ttp://127.0.0.1:9099 is not responding" )
+				os.Exit(1)
+						}
+		return response
+		}
+	return response
+	  }
+ return response
+}

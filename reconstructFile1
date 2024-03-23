@@ -1,0 +1,156 @@
+package main
+
+import (
+	"context"
+	"crypto/md5"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"sort"
+	"sync"
+	"time"
+
+	shell "github.com/ipfs/go-ipfs-api"
+)
+
+type ChunkResult struct {
+	Index int
+	Data  []byte
+	Valid bool
+}
+
+func getFile() {
+	// ... your other code here ...
+	fmt.Println("Provide the name of the file you want to retrieve:")
+	var fileName string
+	fmt.Scan(&fileName)
+
+	metadata, err := LoadMetadata(fileName)
+	if err != nil {
+		panic(err)
+	}
+
+	//retreivedChunks := make([]ReconFile, len(metadata.IpfsHashes))
+	retreiveddata := make([][]byte, len(metadata.IpfsHashes))
+	fmt.Println("########Retreiving########")
+
+	api := shell.NewShell("localhost:5001") // Create a new IPFS API client
+	for i := 0; i < 5; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+
+		startt := time.Now()
+		results, validChunks := downloadChunks(ctx, cancel, metadata, api)
+
+		if validChunks < metadata.DataShards {
+			fmt.Println("Not enough valid chunks to reconstruct the file")
+			return
+		}
+		//for i := activeroutines; i <= len(metadata.IpfsHashes) ; i++ {
+		//if valChunks == metadata.DataShards {
+		results[3].Data = nil
+		results[3].Index = 3
+		// retreivedChunks[5].chunkData = nil
+		// retreivedChunks[5].index = 5
+		//}
+
+		//}
+		// ... your other code here ...
+		sort.Slice(results, func(i, j int) bool {
+
+			return results[i].Index < results[j].Index // use ">" if you want descending order
+		})
+		//fmt.Println(len(retreivedChunks))
+		for i, chunk := range results {
+
+			//fmt.Println(i,chunk)
+			retreiveddata[i] = chunk.Data
+		}
+		decodedData, err := decodingData(retreiveddata, metadata)
+		if err != nil {
+			panic(err)
+		}
+		elapsed := time.Since(startt)
+		fmt.Println("File retreival time", elapsed)
+
+		// Save the decoded file
+		err = ioutil.WriteFile("RetrievedFile.txt", decodedData, 0644)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("File retrieved successfully!")
+		
+	}
+
+	// ... your other code here ...
+
+}
+
+func downloadChunks(ctx context.Context, cancel context.CancelFunc, metadata *Metadata, api *shell.Shell) ([]ChunkResult, int) {
+	results := make([]ChunkResult, len(metadata.IpfsHashes))
+	var wg sync.WaitGroup
+	wg.Add(len(metadata.IpfsHashes))
+	activeroutines = 0
+	validChunks = 0
+	breakLoop = false
+	//validChunks := 0
+	//mux := &sync.Mutex{}
+
+	for i := range metadata.IpfsHashes {
+		activeroutines = activeroutines + 1
+		go func(i int) {
+			//defer wg.Done()
+
+			// select {
+			// case <-ctx.Done():
+			if breakLoop {
+				fmt.Println("Breaking the loop")
+				return
+			}
+			// 	return
+			// default:
+			// }
+
+			fileContents, err := api.Cat(metadata.IpfsHashes[i])
+			if err != nil {
+				results[i] = ChunkResult{Index: i, Data: nil}
+				wg.Done()
+			} else {
+				data, _ := io.ReadAll(fileContents)
+				hash := md5.Sum(data)
+				if fmt.Sprintf("%x", hash) == metadata.ShardHashes[i] {
+					results[i] = ChunkResult{Index: i, Data: data}
+					fmt.Printf("Chunk %v retrieved successfully!\n", i)
+					//mux.Lock()
+					validChunks++
+					if validChunks == metadata.DataShards {
+						for i := 0; i <= len(metadata.IpfsHashes)-activeroutines; i++ {
+							wg.Done() // Cancel remaining goroutines
+							fmt.Println("received 3 valis chunks")
+						}
+						
+						breakLoop = true
+						
+					} else {
+						wg.Done()
+					}
+					//mux.Unlock()
+					
+				} else {
+					wg.Done()
+					results[i] = ChunkResult{Index: i, Data: nil}
+				}
+
+			}
+
+		}(i)
+
+		if breakLoop {
+			fmt.Println("Breaking the loop")
+			break
+		}
+
+	}
+
+	wg.Wait()
+	return results, validChunks
+}

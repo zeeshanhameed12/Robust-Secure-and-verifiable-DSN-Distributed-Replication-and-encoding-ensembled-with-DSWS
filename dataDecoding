@@ -1,0 +1,26 @@
+package main
+
+import (
+	"bytes"
+
+	"github.com/klauspost/reedsolomon"
+)
+
+func decodingData(encodedData [][]byte, metadata *Metadata) ([]byte, error) {
+	// Create Reed-Solomon decoder
+	dec, err := reedsolomon.New(int( metadata.DataShards), int( metadata.ParityShards))
+	if err != nil {
+		return nil, err
+	}
+
+	err = dec.Reconstruct(encodedData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Join data shards
+	data := bytes.Join(encodedData[:metadata.DataShards], nil)
+
+	// Truncate to original file size
+	return data[:metadata.FileSize], nil
+}

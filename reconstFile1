@@ -1,0 +1,119 @@
+package main
+
+import (
+	"crypto/md5"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"sort"
+	"sync"
+	"time"
+
+	shell "github.com/ipfs/go-ipfs-api"
+)
+
+type ChunkResult struct {
+	Index int
+	Data  []byte
+	Valid bool
+}
+
+func getFile() {
+	// ... your other code here ...
+	fmt.Println("Provide the name of the file you want to retrieve:")
+	var fileName string
+	fmt.Scan(&fileName)
+
+	metadata, err := LoadMetadata(fileName)
+	if err != nil {
+		panic(err)
+	}
+
+	//retreivedChunks := make([]ReconFile, len(metadata.IpfsHashes))
+	retreiveddata := make([][]byte, len(metadata.IpfsHashes))
+	fmt.Println("########Retreiving########")
+
+	api := shell.NewShell("localhost:5001") // Create a new IPFS API client
+
+	for i := 0; i < 10; i++ {
+
+		startt := time.Now()
+		results := downloadChunks(metadata, api)
+
+		validChunks := 0
+		for _, result := range results {
+			if result.Valid {
+				validChunks++
+			}
+		}
+
+		if validChunks < metadata.DataShards {
+			fmt.Println("Not enough valid chunks to reconstruct the file")
+			return
+		}
+
+		// ... your other code here ...
+		sort.Slice(results, func(i, j int) bool {
+
+			return results[i].Index < results[j].Index // use ">" if you want descending order
+		})
+		//fmt.Println(len(retreivedChunks))
+		for i, chunk := range results {
+
+			//fmt.Println(i,chunk)
+			retreiveddata[i] = chunk.Data
+		}
+		decodedData, err := decodingData(retreiveddata, metadata)
+		if err != nil {
+			panic(err)
+		}
+		elapsed := time.Since(startt)
+		fmt.Println("File retreival time", elapsed)
+
+		// Save the decoded file
+		err = ioutil.WriteFile("RetrievedFile.txt", decodedData, 0644)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("File retrieved successfully!")
+
+	}
+
+	// ... your other code here ...
+
+}
+
+func downloadChunks(metadata *Metadata, api *shell.Shell) []ChunkResult {
+	results := make([]ChunkResult, len(metadata.IpfsHashes))
+	var wg sync.WaitGroup
+	wg.Add(len(metadata.IpfsHashes))
+
+	for i := range metadata.IpfsHashes {
+		go func(i int) {
+			defer wg.Done()
+
+			fileContents, err := api.Cat(metadata.IpfsHashes[i])
+			if err != nil {
+				results[i] = ChunkResult{Index: i}
+				return
+			}
+
+			data, err := io.ReadAll(fileContents)
+			if err != nil {
+				results[i] = ChunkResult{Index: i}
+				return
+			}
+
+			hash := md5.Sum(data)
+			if fmt.Sprintf("%x", hash) == metadata.ShardHashes[i] {
+				results[i] = ChunkResult{Index: i, Data: data, Valid: true}
+				fmt.Printf("Chunk %v retrieved successfully!\n", i)
+			} else {
+				results[i] = ChunkResult{Index: i}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	return results
+}

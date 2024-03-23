@@ -1,0 +1,56 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
+	// Replace with the path to your generated Go bindings
+)
+
+func main() {
+	ganacheURL := "http://localhost:8545" // Default Ganache CLI URL
+	contractAddress := "0x573A921aE778e5F19171f98D95092b8a72737735"
+	privateKeyHex := "f58aefca586e6b0791b83109e00d885f5abc6750305dbe635aceeb487b6ad47b"
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		log.Fatalf("Invalid private key: %v", err)
+	}
+	callerAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
+	//callerAddress := common.HexToAddress("0xB00aBB6c085924c1Efb3aB3C340470da275806b4") // Specify the caller's address
+
+	client, err := ethclient.Dial(ganacheURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to the Ethereum client: %v", err)
+	}
+
+	contract, err := NewMain(common.HexToAddress(contractAddress), client)
+	if err != nil {
+		log.Fatalf("Failed to instantiate the contract: %v", err)
+	}
+
+	fileName := "File1" // The file name you used when saving the metadata
+
+	opts := &bind.CallOpts{
+		Context: context.Background(),
+		From:    callerAddress, // Specify the caller's address
+	}
+
+	metadata, err := contract.LoadMetadata(opts, fileName)
+	if err != nil {
+		log.Fatalf("Failed to retrieve metadata: %v", err)
+	}
+
+	fmt.Println("Retrieved metadata:")
+	fmt.Printf("File Name: %s\n", metadata.FileName)
+	fmt.Printf("File Size: %d\n", metadata.FileSize)
+	fmt.Printf("Data Shards: %d\n", metadata.DataShards.Int64())
+	fmt.Printf("Parity Shards: %d\n", metadata.ParityShards.Int64())
+	fmt.Println("Shard Hashes:", metadata.ShardHashes)
+	fmt.Println("Shard Order:", metadata.ShardOrder)
+	fmt.Println("IPFS Hashes:", metadata.IpfsHashes)
+}

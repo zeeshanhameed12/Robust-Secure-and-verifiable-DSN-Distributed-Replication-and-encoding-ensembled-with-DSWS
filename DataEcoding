@@ -1,0 +1,60 @@
+package main
+
+import (
+	"crypto/md5"
+	"fmt"
+
+	"github.com/klauspost/reedsolomon"
+)
+
+func encodingData(data []byte, dataShards, parityShards int) ([][]byte, *Metadata, error) {
+	// Create Reed-Solomon encoder
+	enc, err := reedsolomon.New(dataShards, parityShards)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Pad data to a multiple of shard count
+	shards, err := enc.Split(data)
+	if err != nil {
+		return nil, nil, err
+	}
+	// padding := (dataShards - len(data)%dataShards) % dataShards
+	// data = append(data, bytes.Repeat([]byte{0}, padding)...)
+	// Split data into shards
+	shardSize := len(data) / dataShards
+	// if len(data)%dataShards != 0 {
+	// 	shardSize++
+	// }
+	shardsData := make([][]byte, dataShards+parityShards)
+	for i := 0; i < dataShards; i++ {
+		start := i * shardSize
+		end := start + shardSize
+		if end > len(data) {
+			end = len(data)
+		}
+		shardsData[i] = data[start:end]
+	}
+
+	// Encode shards
+	err = enc.Encode(shards)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create metadata
+	metadata := &Metadata{
+		FileSize:     int64(len(data)),
+		DataShards:  int64( dataShards),
+		ParityShards: int64( parityShards),
+		ShardHashes:  make([]string, len(shards)),
+		IpfsHashes:   make([]string, len(shards)),
+		ShardOrder:   make([]int, len(shards)),
+	}
+	for i, shard := range shards {
+		hash := md5.Sum(shard)
+		metadata.ShardHashes[i] = fmt.Sprintf("%x", hash)
+		metadata.ShardOrder[i] = i
+	}
+
+	return shards, metadata, nil
+}

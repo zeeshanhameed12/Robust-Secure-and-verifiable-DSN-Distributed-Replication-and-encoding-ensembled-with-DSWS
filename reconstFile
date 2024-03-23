@@ -1,0 +1,150 @@
+package main
+
+import (
+	"crypto/md5"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"sort"
+	"sync"
+	"time"
+
+	shell "github.com/ipfs/go-ipfs-api"
+)
+
+func getFile() {
+	fmt.Println("Provide the name of the file you want to retrieve:")
+	var fileName string
+	fmt.Scan(&fileName)
+
+	metadata, err := LoadMetadata(fileName)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(metadata)
+
+	retreivedChunks := make([]ReconFile, len(metadata.IpfsHashes))
+	retreiveddata := make([][]byte, len(metadata.IpfsHashes))
+	fmt.Println("########Retreiving########")
+	fmt.Println(metadata.IpfsHashes)
+
+	api := shell.NewShell("localhost:5001") // Create a new IPFS API client
+	for i := 0; i < 10; i++ {
+	var wg sync.WaitGroup
+	wg.Add(len(metadata.IpfsHashes))
+	c := make(chan ReconFile)
+	d := make(chan int)
+	startt := time.Now()
+	
+	//mis := 1
+	for i := 0; i < len(metadata.IpfsHashes); i++ {
+
+		go func(i int) {
+
+			response := downloadChunk(metadata, api, string(metadata.IpfsHashes[i]), metadata.ShardHashes[i], metadata.ShardOrder[i], &wg)
+			c <- response
+			d <- response.flg
+		}(i)
+		retreivedChunks[i] = <-c
+		e := <-d
+		if e == 1 {
+			break
+		}
+
+		// if len(retreivedChunks) {
+
+		// }
+
+	}
+	//fmt.Println(retreivedChunks)
+	fmt.Println("########Retreived########")
+	wg.Wait()
+	//for i := activeroutines; i <= len(metadata.IpfsHashes) ; i++ {
+	if valChunks == metadata.DataShards {
+		retreivedChunks[3].chunkData = nil
+		retreivedChunks[3].index = 3
+		// retreivedChunks[5].chunkData = nil
+		// retreivedChunks[5].index = 5
+	}
+
+	//}
+
+	sort.Slice(retreivedChunks, func(i, j int) bool {
+
+		return retreivedChunks[i].index < retreivedChunks[j].index // use ">" if you want descending order
+	})
+	//fmt.Println(len(retreivedChunks))
+	for i, chunk := range retreivedChunks {
+
+		//fmt.Println(i,chunk)
+		retreiveddata[i] = chunk.chunkData
+	}
+
+	// ombine the chunks in the correct order
+
+	// Decode the combined data
+	decodedData, err := decodingData(retreiveddata, metadata)
+	if err != nil {
+		panic(err)
+	}
+	elapsed := time.Since(startt)
+	fmt.Println("File retreival time", elapsed)
+
+	// Save the decoded file
+	err = ioutil.WriteFile("RetrievedFile.txt", decodedData, 0644)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("File retrieved successfully!")
+activeroutines = 0
+valChunks = 0
+	}
+}
+
+func downloadChunk(metadata *Metadata, api *shell.Shell, ipfsHash string, shardHash string, index int, wg *sync.WaitGroup) ReconFile {
+	activeroutines = activeroutines + 1
+	fileContents, err := api.Cat(ipfsHash)
+	if err != nil {
+		var indata = ReconFile{
+			index:     index,
+			flg:       0,
+			chunkData: nil,
+		}
+		wg.Done()
+		return indata
+	} else {
+		b, _ := io.ReadAll(fileContents)
+		hash := md5.Sum(b)
+		if fmt.Sprintf("%x", hash) == (shardHash) {
+			var indata = ReconFile{
+				index:     index,
+				chunkData: b,
+			}
+			fmt.Printf("Chunk %v retrieved successfully!\n", index)
+			valChunks = valChunks + 1
+
+			if valChunks == metadata.DataShards {
+				for i := 0; i <= len(metadata.IpfsHashes)-activeroutines; i++ {
+					wg.Done() // Cancel remaining goroutines
+				}
+				indata.flg = 1
+				return indata
+			} else {
+				wg.Done()
+				return indata
+			}
+
+		} else {
+
+			var indata = ReconFile{
+				index:     index,
+				flg:       0,
+				chunkData: nil,
+			}
+			wg.Done()
+			return indata
+		}
+
+	}
+
+}

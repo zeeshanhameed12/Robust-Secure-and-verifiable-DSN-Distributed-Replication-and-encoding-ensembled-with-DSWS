@@ -1,0 +1,96 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"math/big"
+
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
+)
+
+const (
+	infuraURL  = "https://sepolia.infura.io/v3/a2b0e9a36e9a481b8a5356585850b404"
+	ganacheurl = "http://localhost:8545"
+	// walletPath = "./wallet/UTC--2024-03-06T18-26-46.040477236Z--4a02341be8e888617faedd979d25adc80061cece"
+	// walletPassword = "account1"
+	contractAddressHex = "0x573A921aE778e5F19171f98D95092b8a72737735"
+)
+
+func main() {
+	client, err := ethclient.Dial(ganacheurl)
+	if err != nil {
+		log.Fatalf("Failed to connect to the Ethereum client: %v", err)
+	}
+	defer client.Close()
+	privateKeyHex := "f58aefca586e6b0791b83109e00d885f5abc6750305dbe635aceeb487b6ad47b"
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		log.Fatalf("Invalid private key: %v", err)
+	}
+
+	// // Read the key file
+	// keyJSON, err := os.ReadFile(walletPath)
+	// if err != nil {
+	//     log.Fatalf("Failed to read the wallet file: %v", err)
+	// }
+
+	// // Decrypt the key file
+	// key, err := keystore.DecryptKey(keyJSON, walletPassword)
+	// if err != nil {
+	//     log.Fatalf("Failed to decrypt the wallet file: %v", err)
+	// }
+
+	// Create an auth transactor
+	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, big.NewInt(1337)) // Use the correct chain ID for Sepolia
+	if err != nil {
+		log.Fatalf("Failed to create authorized transactor: %v", err)
+	}
+
+	// Set up nonce, gas price, and gas limit for the transaction
+	nonce, err := client.PendingNonceAt(context.Background(), crypto.PubkeyToAddress(privateKey.PublicKey))
+	if err != nil {
+		log.Fatalf("Failed to get nonce: %v", err)
+	}
+	auth.Nonce = big.NewInt(int64(nonce))
+
+	balance, err := client.BalanceAt(context.Background(), auth.From, nil)
+	if err != nil {
+		log.Fatalf("Failed to retrieve account balance: %v", err)
+	}
+	fmt.Printf("Balance: %s\n", balance.String())
+
+	// gasPrice, err := client.SuggestGasPrice(context.Background())
+	// if err != nil {
+	//     log.Fatalf("Failed to suggest gas price: %v", err)
+	// }
+	// auth.GasPrice = gasPrice
+	// auth.GasLimit = uint64(3000000) // You may adjust this value according to the complexity of the contract function
+
+	// Create a new instance of the contract
+	contractAddress := common.HexToAddress(contractAddressHex)
+	metadataStorageInstance, err := NewMain(contractAddress, client)
+	if err != nil {
+		log.Fatalf("Failed to instantiate a MetadataStorage contract: %v", err)
+	}
+
+	// Prepare metadata
+	fileName := "File1"
+	fileSize := int64(1) // Example file size
+	dataShards := big.NewInt(1)
+	parityShards := big.NewInt(2)
+	shardHashes := []string{"Hash1", "Hash2", "Hash3"}
+	shardOrder := []*big.Int{big.NewInt(3), big.NewInt(5), big.NewInt(6), big.NewInt(7)}
+	ipfsHashes := []string{"ipfsHash1", "ipfsHash2", "ipfsHash3"}
+
+	// Save metadata using the contract
+	tx, err := metadataStorageInstance.SaveMetadata(auth, fileName, fileSize, dataShards, parityShards, shardHashes, shardOrder, ipfsHashes)
+	if err != nil {
+		log.Fatalf("Failed to save metadata: %v", err)
+	}
+
+	fmt.Printf("Metadata saved; transaction hash: %s\n", tx.Hash().Hex())
+}
